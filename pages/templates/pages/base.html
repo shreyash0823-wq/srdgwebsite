@@ -89,15 +89,20 @@
     />
     <link rel="stylesheet" href="{% static 'pages/styles/base.css' %}" />
     {% block head %} {% endblock %}
-   <!-- Vercel Web Analytics -->
-<script>
-  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
-</script>
-<script defer src="/_vercel/insights/script.js"></script>
+    <!-- Vercel Web Analytics -->
+    <script>
+      window.va =
+        window.va ||
+        function () {
+          (window.vaq = window.vaq || []).push(arguments);
+        };
+    </script>
+    <script defer src="/_vercel/insights/script.js"></script>
   </head>
   <body>
     <div class="site-banner">
-      Reduced operations from September to January - responses may be delayed.
+      We are currently updating our website and running on reduced operations
+      through January; please expect delayed responses
     </div>
     <nav>
       <a href="{% url 'home' %}" style="text-decoration: none">
