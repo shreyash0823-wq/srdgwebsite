@@ -177,6 +177,12 @@
     white-space: nowrap;
 }
 
+.spots-left {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--red);
+}
+
 .btn-ita:hover {
     background: var(--red);
     color: #fff;

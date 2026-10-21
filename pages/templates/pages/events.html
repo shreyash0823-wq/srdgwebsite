@@ -38,7 +38,14 @@
                         {% if event.ticketed %}
                         <a href="{% url 'event_tickets' event.id %}" class="btn-ita">Buy Tickets</a>
                         {% else %}
+                        {% with left=event.spots_left_display %}
+                        {% if left == 0 %}
+                        <span class="spots-left">Full</span>
+                        {% else %}
                         <a href="{% url 'event_attend' event.id %}" class="btn-ita">I'll Attend</a>
+                        {% if left %}<span class="spots-left">{{ left }} spot{{ left|pluralize }} left</span>{% endif %}
+                        {% endif %}
+                        {% endwith %}
                         {% endif %}
                     {% endif %}
                 </div>
