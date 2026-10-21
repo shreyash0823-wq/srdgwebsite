@@ -320,16 +320,6 @@ def event_rsvp(request, event_id):
             return redirect('event_attend', event_id=event_id)
     return redirect('events')
 
-def partners(request):
-    total_members = Member.objects.count()
-    schools_count = len([s for s in Member.SCHOOLS if s[0] != 'other'])
-
-    return render(request, 'pages/partners.html', {
-        'total_members': total_members,
-        'schools_count': schools_count,
-    })
-
-
 DONATION_AMOUNTS_NZD = [5, 10, 25, 50, 100]
 
 

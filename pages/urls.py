@@ -25,7 +25,6 @@ urlpatterns = [
     path('blog/<int:id>/', views.blog_detail, name='blog_detail'),
     path('blog/<int:id>/react/<str:reaction>/', views.blog_react, name='blog_react'),
     path('blog/create/', views.create_blog, name='create_blog'),
-    path('partners/', views.partners, name='partners'),
     path('robots.txt', TemplateView.as_view(template_name='pages/robots.txt', content_type='text/plain')),
     path('network263/', views.network263, name='network263'),
     path('events/debate/', views.debate, name='debate'),
