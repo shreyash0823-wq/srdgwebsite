@@ -103,10 +103,26 @@ class Event(models.Model):
     initiative = models.ForeignKey(Initiative, on_delete=models.SET_NULL, related_name='events', null=True, blank=True)
     tbc = models.BooleanField(default=False, verbose_name='TBC')
     ticketed = models.BooleanField(default=False)
+    max_spots = models.PositiveIntegerField(null=True, blank=True, help_text='Real RSVP cap. Blank = unlimited.')
+    shown_spots = models.PositiveIntegerField(null=True, blank=True, help_text='Spots the website advertises. Blank = same as max spots.')
 
     def clean(self):
         if self.start_time and self.end_time and self.end_time <= self.start_time:
             raise ValidationError('End time must be after start time.')
+
+    @property
+    def is_full(self):
+        return self.max_spots is not None and self.rsvps.count() >= self.max_spots
+
+    @property
+    def spots_left_display(self):
+        """Advertised spots left: counts down from shown_spots, then sticks at 1 until truly full."""
+        if self.max_spots is None:
+            return None
+        taken = self.rsvps.count()
+        if taken >= self.max_spots:
+            return 0
+        return max(1, (self.shown_spots or self.max_spots) - taken)
 
     @property
     def get_status(self):

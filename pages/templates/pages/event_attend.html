@@ -36,7 +36,12 @@
         {% endif %}
     </div>
 
-    {% if event.get_status != 'completed' %}
+    {% if event.get_status != 'completed' and event.is_full %}
+    <p class="ita-closed">Sorry, this event is full.</p>
+    {% elif event.get_status != 'completed' %}
+    {% with left=event.spots_left_display %}
+    {% if left %}<p class="ita-instructions"><strong>{{ left }} spot{{ left|pluralize }} left</strong></p>{% endif %}
+    {% endwith %}
     <div class="ita-form">
         <p class="ita-instructions">Fill in your details to confirm attendance.</p>
         <form method="post" action="{% url 'event_rsvp' event.id %}">

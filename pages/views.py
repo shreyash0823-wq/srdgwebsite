@@ -293,7 +293,12 @@ def event_rsvp(request, event_id):
             if member:
                 rsvp.member = member
             try:
-                rsvp.save()
+                with transaction.atomic():
+                    # Lock the event row so two people can't both take the last spot.
+                    if Event.objects.select_for_update().get(id=event.id).is_full:
+                        messages.error(request, "Sorry, this event is full.")
+                        return redirect('event_attend', event_id=event_id)
+                    rsvp.save()
             except IntegrityError:
                 messages.error(request, "You've already registered for this event with that email")
                 return redirect('event_attend', event_id=event_id)
