@@ -4,7 +4,7 @@ from django.db.models import Count, Q
 from django.http import HttpResponseRedirect
 from django.urls import path, reverse
 from django.template.response import TemplateResponse
-from .models import Member, Initiative, Event, Seminar, MemberRole, BlogPost, BlogImage, BlogAttachment, BlogReaction, EventRSVP, ArtPiece, AboutPhoto, Seat, Ticket
+from .models import Member, Initiative, Event, Seminar, MemberRole, BlogPost, BlogImage, BlogAttachment, BlogReaction, EventRSVP, ArtPiece, AboutPhoto, Ticket
 
 @admin.register(Member)
 class MemberAdmin(admin.ModelAdmin):
@@ -81,19 +81,12 @@ class EventRSVPAdmin(admin.ModelAdmin):
     search_fields = ['first_name', 'last_name', 'email']
     autocomplete_fields = ['event', 'member']
 
-@admin.register(Seat)
-class SeatAdmin(admin.ModelAdmin):
-    list_display = ['event', 'row', 'number', 'is_accessible']
-    list_filter = ['event', 'is_accessible']
-    search_fields = ['row']
-    autocomplete_fields = ['event']
-
 @admin.register(Ticket)
 class TicketAdmin(admin.ModelAdmin):
-    list_display = ['seat', 'name', 'email', 'status', 'created_at']
-    list_filter = ['status', 'seat__event']
+    list_display = ['event', 'quantity', 'name', 'email', 'status', 'created_at']
+    list_filter = ['status', 'event']
     search_fields = ['name', 'email']
-    autocomplete_fields = ['seat']
+    autocomplete_fields = ['event']
 
 @admin.register(MemberRole)
 class MemberRoleAdmin(admin.ModelAdmin):

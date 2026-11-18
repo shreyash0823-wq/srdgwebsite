@@ -103,23 +103,34 @@ class Event(models.Model):
     initiative = models.ForeignKey(Initiative, on_delete=models.SET_NULL, related_name='events', null=True, blank=True)
     tbc = models.BooleanField(default=False, verbose_name='TBC')
     ticketed = models.BooleanField(default=False)
-    max_spots = models.PositiveIntegerField(null=True, blank=True, help_text='Real RSVP cap. Blank = unlimited.')
+    ticket_price = models.DecimalField(max_digits=7, decimal_places=2, null=True, blank=True, help_text='NZD per ticket. Required if ticketed.')
+    max_spots = models.PositiveIntegerField(null=True, blank=True, help_text='Real cap on RSVPs (or tickets, if ticketed). Blank = unlimited.')
     shown_spots = models.PositiveIntegerField(null=True, blank=True, help_text='Spots the website advertises. Blank = same as max spots.')
 
     def clean(self):
         if self.start_time and self.end_time and self.end_time <= self.start_time:
             raise ValidationError('End time must be after start time.')
+        if self.ticketed and not self.ticket_price:
+            raise ValidationError('Ticketed events need a ticket price.')
+
+    @property
+    def spots_taken(self):
+        """RSVPs, or for ticketed events: tickets paid for or held in an unfinished checkout."""
+        if not self.ticketed:
+            return self.rsvps.count()
+        live = models.Q(status=Ticket.PAID) | models.Q(hold_expires_at__gt=timezone.now())
+        return self.tickets.filter(live).aggregate(n=models.Sum('quantity'))['n'] or 0
 
     @property
     def is_full(self):
-        return self.max_spots is not None and self.rsvps.count() >= self.max_spots
+        return self.max_spots is not None and self.spots_taken >= self.max_spots
 
     @property
     def spots_left_display(self):
         """Advertised spots left: counts down from shown_spots, then sticks at 1 until truly full."""
         if self.max_spots is None:
             return None
-        taken = self.rsvps.count()
+        taken = self.spots_taken
         if taken >= self.max_spots:
             return 0
         return max(1, (self.shown_spots or self.max_spots) - taken)
@@ -303,26 +314,14 @@ class EventRSVP(models.Model):
         return f"{self.first_name} {self.last_name} — {self.event.title}"
 
 
-class Seat(models.Model):
-    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='seats')
-    row = models.CharField(max_length=2)
-    number = models.PositiveIntegerField()
-    is_accessible = models.BooleanField(default=False)
-
-    class Meta:
-        ordering = ['row', 'number']
-        unique_together = [('event', 'row', 'number')]
-
-    def __str__(self):
-        return f"{self.row}{self.number}"
-
-
 class Ticket(models.Model):
+    """One checkout: `quantity` general-admission tickets for an event."""
     PENDING = 'pending'
     PAID = 'paid'
     STATUS_CHOICES = [(PENDING, 'Pending'), (PAID, 'Paid')]
 
-    seat = models.OneToOneField(Seat, on_delete=models.CASCADE, related_name='ticket')
+    event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='tickets')
+    quantity = models.PositiveIntegerField(default=1)
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=PENDING)
     hold_expires_at = models.DateTimeField(null=True, blank=True)
     stripe_session_id = models.CharField(max_length=255, blank=True)
@@ -331,7 +330,7 @@ class Ticket(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"{self.seat} — {self.status}"
+        return f"{self.event} ×{self.quantity} — {self.status}"
 
 
 class BlogAttachment(models.Model):

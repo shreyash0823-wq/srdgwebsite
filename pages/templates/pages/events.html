@@ -35,18 +35,18 @@
                 <div class="event-right">
                     <span class="badge badge-{{ event.get_status }}">{{ event.get_status }}</span>
                     {% if event.get_status != 'completed' %}
+                        {% with left=event.spots_left_display %}
+                        {% if left == 0 %}
+                        <span class="spots-left">{% if event.ticketed %}Sold out{% else %}Full{% endif %}</span>
+                        {% else %}
                         {% if event.ticketed %}
                         <a href="{% url 'event_tickets' event.id %}" class="btn-ita">Buy Tickets</a>
                         {% else %}
-                        {% with left=event.spots_left_display %}
-                        {% if left == 0 %}
-                        <span class="spots-left">Full</span>
-                        {% else %}
                         <a href="{% url 'event_attend' event.id %}" class="btn-ita">I'll Attend</a>
-                        {% if left %}<span class="spots-left">{{ left }} spot{{ left|pluralize }} left</span>{% endif %}
+                        {% endif %}
+                        {% if left %}<span class="spots-left">{{ left }} {% if event.ticketed %}ticket{% else %}spot{% endif %}{{ left|pluralize }} left</span>{% endif %}
                         {% endif %}
                         {% endwith %}
-                        {% endif %}
                     {% endif %}
                 </div>
             </div>

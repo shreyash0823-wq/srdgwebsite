@@ -10,7 +10,7 @@
         <div class="success-icon">✓</div>
         <h1>You're going to {{ event.title }}!</h1>
         <p class="success-message">
-            Your seat{{ seats|length|pluralize }}: <strong>{% for seat in seats %}{{ seat }}{% if not forloop.last %}, {% endif %}{% endfor %}</strong>
+            <strong>{{ quantity }} ticket{{ quantity|pluralize }}</strong> — confirmation sent to your email.
         </p>
         <p class="success-message">
             {{ event.location }}{% if event.start_time %} · {{ event.start_time|date:"j F Y, g:i A" }}{% endif %}
