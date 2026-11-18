@@ -4,6 +4,7 @@
 {% block head %}
 <link rel="stylesheet" href="{% static 'pages/styles/events.css' %}">
 <link rel="stylesheet" href="{% static 'pages/styles/event_attend.css' %}">
+<link rel="stylesheet" href="{% static 'pages/styles/event_tickets.css' %}">
 {% endblock %}
 {% block content %}
 <div class="events-page">
@@ -36,26 +37,64 @@
         {% endif %}
     </div>
 
-    {% if event.get_status != 'completed' and event.is_full %}
-    <p class="ita-closed">Sorry, this event is sold out.</p>
-    {% elif event.get_status != 'completed' %}
+
+    {% if event.get_status != 'completed' %}
+    {% if event.seated %}
+    <div class="ticket-map">
+        <div class="ticket-stage">STAGE</div>
+        <div class="ticket-seats">
+            {% regroup seats by row as seat_rows %}
+            {% for row in seat_rows %}
+            <div class="seat-row">
+                <span class="seat-row-label">{{ row.grouper }}</span>
+                <div class="seat-row-seats">
+                    {% if row.grouper == 'B' or row.grouper == 'G' %}<span class="seat-spacer-half"></span>{% endif %}
+                    {% for seat in row.list %}
+                    <button type="button"
+                        class="seat{% if seat.taken %} seat-taken{% endif %}"
+                        data-seat-id="{{ seat.id }}"
+                        data-label="{{ seat.row }}{{ seat.number }}"
+                        data-price="{{ seat.price }}"
+                        {% if seat.taken %}disabled{% endif %}
+                        aria-label="Seat {{ seat.row }}{{ seat.number }}{% if seat.taken %}, unavailable{% else %}, ${{ seat.price }} NZD{% endif %}"
+                    >{{ seat.number }}</button>
+                    {% endfor %}
+                    {% if row.grouper == 'B' or row.grouper == 'G' %}<span class="seat-spacer-half"></span>{% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="seat-legend">
+            <span><span class="seat-swatch"></span> Available</span>
+            <span><span class="seat-swatch seat-swatch--selected"></span> Selected</span>
+            <span><span class="seat-swatch seat-swatch--taken"></span> Taken</span>
+        </div>
+    </div>
+    {% endif %}
+
     {% if tickets_on_sale %}
+    {%if event.seated %}
+    <div class="ticket-summary" id="ticketSummary">
+        <span id="ticketCount">0 seats selected</span>
+        <span id="ticketTotal">$0 NZD</span>
+    </div>
+    {% endif %}
+
     <div class="ita-form">
-        {% with left=event.spots_left_display %}
-        <p class="ita-instructions">Tickets are <strong>${{ event.ticket_price|floatformat:"-2" }} NZD</strong> each.{% if left %} <strong>{{ left }} ticket{{ left|pluralize }} left.</strong>{% endif %} Enter your details to check out.</p>
-        {% endwith %}
-        <form method="post" action="{% url 'event_tickets_checkout' event.id %}">
+        {% if event.seated %}
+        <p class="ita-instructions">Select your seats above, then enter your details to check out. Rows A and B are $17 NZD per seat; all other rows are $15 NZD.</p>
+        {% else %}
+        <p class="ita-instructions">{{ event.ticket_price|floatformat:"-2" }} NZD per ticket. Enter your details to continue to payment.</p>
+        {% endif %}
+        <form method="post" action="{% url 'event_tickets_checkout' event.id %}" id="ticketForm">
             {% csrf_token %}
             <div class="ita-row">
-                <input type="text" name="name" placeholder="Full name" required>
+                 <input type="text" name="name" placeholder="Full name" required>
+                          
             </div>
             <input type="email" name="email" placeholder="Email address" required>
-            <label class="ita-instructions">Number of tickets
-                <select name="quantity">
-                    {% for n in quantities %}<option value="{{ n }}">{{ n }}</option>{% endfor %}
-                </select>
-            </label>
-            <button type="submit" class="btn-submit">Continue to payment</button>
+            <div id="seatInputs"></div>
+            <button type="submit" class="btn-submit" id="ticketSubmit" {% if event.seated %}disabled{% endif %}>{% if event.seated %}Select seats to continue{% else %}Continue to payment{% endif %}</button>
         </form>
     </div>
     {% endif %}
@@ -66,4 +105,50 @@
     <a href="{% url 'events' %}" class="ita-back">← Back to Events</a>
 </div>
 
+{% if tickets_on_sale %}
+{% if event.seated %}
+<script>
+    (function () {
+        const selected = new Map();  // seat id -> price
+        const countEl = document.getElementById('ticketCount');
+        const totalEl = document.getElementById('ticketTotal');
+        const submitBtn = document.getElementById('ticketSubmit');
+        const inputsEl = document.getElementById('seatInputs');
+
+        function refresh() {
+            let total = 0;
+            selected.forEach(function (seatPrice) { total += seatPrice; });
+            countEl.textContent = selected.size + (selected.size === 1 ? ' seat selected' : ' seats selected');
+            totalEl.textContent = '$' + total + ' NZD';
+            submitBtn.disabled = selected.size === 0;
+            submitBtn.textContent = selected.size === 0 ? 'Select seats to continue' : 'Continue to payment';
+            inputsEl.innerHTML = '';
+            selected.forEach(function (seatPrice, seatId) {
+                const input = document.createElement('input');
+                input.type = 'hidden';
+                input.name = 'seat_ids';
+                input.value = seatId;
+                inputsEl.appendChild(input);
+            });
+        }
+
+        document.querySelectorAll('.seat:not(.seat-taken)').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                const seatId = btn.dataset.seatId;
+                if (selected.has(seatId)) {
+                    selected.delete(seatId);
+                    btn.classList.remove('seat-selected');
+                } else {
+                    selected.set(seatId, Number(btn.dataset.price));
+                    btn.classList.add('seat-selected');
+                }
+                refresh();
+            });
+        });
+
+        refresh();
+    })();
+</script>
+{% endif %}
+{% endif %}
 {% endblock %}
