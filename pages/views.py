@@ -1,5 +1,6 @@
 import base64
 import json
+from collections import defaultdict
 from datetime import timedelta
 from django.core.cache import cache
 from django.http import HttpResponse
@@ -10,9 +11,9 @@ from django.contrib import messages
 from django.db import IntegrityError, transaction
 from django.db.models import BooleanField, Case, Count, Q, Value, When
 from django.utils import timezone
-from .models import Member, Initiative, Event, Seminar, MemberRole, BlogPost, BlogImage, BlogAttachment, BlogReaction, ArtPiece, AboutPhoto, Ticket
+from .models import Member, Initiative, Event, Seminar, MemberRole, BlogPost, BlogImage, BlogAttachment, BlogReaction, ArtPiece, AboutPhoto, Seat, Ticket
 from .forms import MemberForm, BlogPostForm, EventRSVPForm
-from .tickets import send_ticket_email
+from .tickets import send_ticket_email, send_workshop_ticket_email
 from .utils import get_client_ip
 from django.views import generic
 import resend
@@ -379,16 +380,31 @@ def donate_success(request):
     })
 
 
+TICKET_PRICE_NZD = 15
+PREMIUM_ROWS = ('A', 'B')
+PREMIUM_PRICE_NZD = 17
 HOLD_MINUTES = 30
-MAX_TICKETS_PER_ORDER = 10
 TICKETS_ON_SALE = True  # flip to True when ticket sales open
+
+
+def seat_price(seat):
+    return PREMIUM_PRICE_NZD if seat.row in PREMIUM_ROWS else TICKET_PRICE_NZD
 
 
 def event_tickets(request, event_id):
     event = get_object_or_404(Event, id=event_id, ticketed=True)
+    now = timezone.now()
+    seats = list(event.seats.select_related('ticket').all())
+    for seat in seats:
+        ticket = getattr(seat, 'ticket', None)
+        # ponytail: is_accessible doubles as "held back from sale" — no separate flag/migration
+        seat.taken = seat.is_accessible or bool(ticket and (ticket.status == Ticket.PAID or (ticket.hold_expires_at and ticket.hold_expires_at > now)))
+        seat.price = seat_price(seat)
     return render(request, 'pages/event_tickets.html', {
         'event': event,
-        'quantities': range(1, MAX_TICKETS_PER_ORDER + 1),
+        'seats': seats,
+        'ticket_price': TICKET_PRICE_NZD,
+        'premium_price': PREMIUM_PRICE_NZD,
         'tickets_on_sale': TICKETS_ON_SALE,
     })
 
@@ -402,26 +418,41 @@ def event_tickets_checkout(request, event_id):
 
     name = request.POST.get('name', '').strip()
     email = request.POST.get('email', '').strip()
-    try:
-        quantity = int(request.POST.get('quantity', ''))
-    except ValueError:
-        quantity = 0
-    if not name or not email or not 1 <= quantity <= MAX_TICKETS_PER_ORDER:
-        messages.error(request, 'Please enter your details and choose how many tickets you want.')
+    if not event.seated:
+        return workshop_checkout(request, event, name, email)
+    seat_ids = request.POST.getlist('seat_ids')
+    
+    if not name or not email or not seat_ids:
+        messages.error(request, 'Please enter your details and select at least one seat.')
         return redirect('event_tickets', event_id=event_id)
 
     now = timezone.now()
     with transaction.atomic():
-        # Lock the event row so two checkouts can't both take the last tickets.
-        event = Event.objects.select_for_update().get(id=event.id)
-        if event.max_spots is not None and event.spots_taken + quantity > event.max_spots:
-            # Don't reveal the real number left — the site advertises a lower one.
-            messages.error(request, 'Sorry, there aren\'t enough tickets left for that many.')
+        seats = list(Seat.objects.select_for_update().filter(event=event, id__in=seat_ids))
+        if len(seats) != len(seat_ids):
+            messages.error(request, 'One of the selected seats no longer exists.')
             return redirect('event_tickets', event_id=event_id)
-        ticket = Ticket.objects.create(
-            event=event, quantity=quantity, name=name, email=email,
-            hold_expires_at=now + timedelta(minutes=HOLD_MINUTES),
-        )
+
+        if any(seat.is_accessible for seat in seats):
+            messages.error(request, 'One of the selected seats is not available for purchase.')
+            return redirect('event_tickets', event_id=event_id)
+
+        for seat in seats:
+            existing = Ticket.objects.filter(seat=seat).first()
+            if existing and (existing.status == Ticket.PAID or (existing.hold_expires_at and existing.hold_expires_at > now)):
+                messages.error(request, 'Sorry, one of your selected seats was just taken. Please choose again.')
+                return redirect('event_tickets', event_id=event_id)
+            if existing:
+                existing.delete()
+
+        Ticket.objects.bulk_create([
+            Ticket(event=event, seat=seat, name=name, email=email, hold_expires_at=now + timedelta(minutes=HOLD_MINUTES))
+            for seat in seats
+        ])
+
+    seats_by_price = defaultdict(list)
+    for seat in seats:
+        seats_by_price[seat_price(seat)].append(seat)
 
     stripe.api_key = settings.STRIPE_SECRET_KEY
     session = stripe.checkout.Session.create(
@@ -430,17 +461,17 @@ def event_tickets_checkout(request, event_id):
         line_items=[{
             'price_data': {
                 'currency': 'nzd',
-                'product_data': {'name': event.title},
-                'unit_amount': int(event.ticket_price * 100),
+                'product_data': {'name': f'{event.title} — {", ".join(sorted(str(s) for s in group))}'},
+                'unit_amount': price * 100,
             },
-            'quantity': quantity,
-        }],
+            'quantity': len(group),
+        } for price, group in sorted(seats_by_price.items())],
         payment_intent_data={'receipt_email': email},
         expires_at=int((now + timedelta(minutes=HOLD_MINUTES)).timestamp()),
         success_url=request.build_absolute_uri(f'/events/{event.id}/tickets/success/') + '?session_id={CHECKOUT_SESSION_ID}',
         cancel_url=request.build_absolute_uri(f'/events/{event.id}/tickets/cancel/') + '?session_id={CHECKOUT_SESSION_ID}',
     )
-    Ticket.objects.filter(id=ticket.id).update(stripe_session_id=session.id)
+    Ticket.objects.filter(seat__in=seats).update(stripe_session_id=session.id)
     return redirect(session.url)
 
 
@@ -454,7 +485,7 @@ def confirm_paid_tickets(session_id):
         pending = list(
             Ticket.objects.select_for_update()
             .filter(stripe_session_id=session_id, status=Ticket.PENDING)
-            .select_related('event')
+            .select_related('seat', 'seat__event')
         )
         if pending:
             Ticket.objects.filter(id__in=[t.id for t in pending]).update(
@@ -463,11 +494,13 @@ def confirm_paid_tickets(session_id):
 
     if pending:
         try:
-            send_ticket_email(pending[0])
+            send_ticket_email(pending[0].email, pending[0].seat.event, [t.seat for t in pending])
         except Exception as e:
             print(f"Ticket email failed: {e}")
         return pending
-    return list(Ticket.objects.filter(stripe_session_id=session_id, status=Ticket.PAID))
+    return list(
+        Ticket.objects.filter(stripe_session_id=session_id, status=Ticket.PAID).select_related('seat')
+    )
 
 
 @csrf_exempt
@@ -488,6 +521,23 @@ def stripe_webhook(request):
             confirm_paid_tickets(session['id'])
     return HttpResponse(status=200)
 
+def send_workshop_ticket_email(ticket, subject_prefix=''):
+    """Email a seatless (workshop) ticket as a confirmation / receipt."""
+    event = ticket.event
+    resend.api_key = settings.RESEND_API_KEY
+    ref = f"SRDG-{ticket.pk:05d}"
+    return resend.Emails.send({
+        "from": "noreply@srdg.co.nz",
+        "to": [ticket.email],
+        "subject": f"{subject_prefix}Your ticket for {event.title}",
+        "html": f"""
+            <h2>Thank you for purchasing a ticket, {escape(ticket.name)}.</h2>
+            <p>Event: <strong>{escape(event.title)}</strong></p>
+            <p>Ticket reference: <strong>{ref}</strong></p>
+            <p>Please show this email at the door.</p>
+        """,
+    })
+
 
 def event_tickets_success(request, event_id):
     session_id = request.GET.get('session_id')
@@ -507,7 +557,7 @@ def event_tickets_success(request, event_id):
     tickets = confirm_paid_tickets(session_id)
     return render(request, 'pages/event_tickets_success.html', {
         'event': event,
-        'quantity': sum(t.quantity for t in tickets),
+        'seats': [t.seat for t in tickets],
     })
 
 
@@ -515,5 +565,5 @@ def event_tickets_cancel(request, event_id):
     session_id = request.GET.get('session_id')
     if session_id:
         Ticket.objects.filter(stripe_session_id=session_id, status=Ticket.PENDING).delete()
-    messages.info(request, 'Checkout cancelled — your tickets have been released.')
+    messages.info(request, 'Checkout cancelled — your seats have been released.')
     return redirect('event_tickets', event_id=event_id)
